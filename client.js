@@ -2,6 +2,7 @@ const net = require("node:net");
 const crypto = require("node:crypto");
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+let handshakeComplete = false;
 
 const client = new net.Socket();
 
@@ -17,33 +18,34 @@ const httpHeaders =
 client.connect(5000, "127.0.0.1", () => {
   console.log("Connected to server");
   client.write(httpHeaders);
-
-  // 🔑 Critical: send frame AFTER handshake, not waiting on data event
-//   setTimeout(() => {
-//     sendWebSocketTextFrame("hello from client");
-//   }, 500);
 });
 
 client.on("data", (data) => {
-  console.log("Received from server:");
-  console.log(data.toString());
-  const response = data.toString();
+  if (!handshakeComplete) {
+    console.log("Received from server:");
+    console.log(data.toString());
+    const response = data.toString();
+      const isValid = validateHandshakeResponse(
+          response,
+          "x3JJHMbDL1EzLkh9GBhXDw=="
+      );
 
-    const isValid = validateHandshakeResponse(
-        response,
-        "x3JJHMbDL1EzLkh9GBhXDw=="
-    );
+      console.log("Handshake valid:", isValid);
+      if (isValid) {
+          // now send your WebSocket frame
+          sendWebSocketTextFrame("hello from client");
+      } else {
+          console.error("Invalid WebSocket handshake");
+          client.destroy();
+      }
+      handshakeComplete = true;
+  } 
+  if (handshakeComplete) {
+    console.log(`Control reached here `)
+    console.log('checking if data is echoed back or not.')
+    console.log(data.toString());
 
-    console.log("Handshake valid:", isValid);
-    if (isValid) {
-        // now send your WebSocket frame
-        sendWebSocketTextFrame("hello from client");
-        client.end();
-    } else {
-        console.error("Invalid WebSocket handshake");
-        client.destroy();
-    }
-
+  }
 });
 
 client.on("close", () => {
@@ -132,3 +134,7 @@ function validateHandshakeResponse(response, clientKey) {
     // 6. Compare
     return headers["sec-websocket-accept"] === expectedAccept.toLowerCase();
 }
+
+// Learning implementation.
+// Not production-ready.
+// Stopped after core protocol understanding.

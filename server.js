@@ -16,6 +16,36 @@ const tcpServer = net.createServer((socket) => {
 
     socket.on('data', (data) =>{
         buffer = Buffer.concat([buffer, data]);
+        if (protoSwitch && buffer.length >= 2) {
+            const byte1 = buffer[0]
+            const finBit = (byte1 >> 7) & 1;
+            const opcode = (byte1 & 0x0F);
+            const maskBit = (buffer[1] >> 7) & 1;
+            //Verifing mask bit
+            if (maskBit !== 1) {
+                console.log('Invalid Frame');
+                return;
+            }
+            const payloadLenHint = buffer[1] & 0b01111111;
+            if (opcode !== 0x1) {
+                console.log('Opcode is wrong');
+            }
+            const totalFrameSize = 2 + 4 + payloadLenHint;
+            if (buffer.length >= totalFrameSize) {
+                const maskingKey = buffer.subarray(2, 6);
+                let payloadMessage = parsePayload(maskingKey, payloadLenHint, buffer.subarray(6, payloadLenHint+6));
+                if (finBit == 1) {
+                    let message = echoMessage(finBit, opcode, payloadMessage);
+                    socket.write(message);
+                    console.log(`echoed message ${message}`)
+
+                }
+                // consuming parsed bytes; 
+                // specifically check if this logic is correct or not because subarray method passes a view of original array in memory ?
+                buffer = Buffer.from(buffer.subarray(totalFrameSize));
+                return;
+            }
+        }
 
         if (!headerParsed) {
             const boundary = buffer.indexOf('\r\n\r\n');
@@ -23,21 +53,17 @@ const tcpServer = net.createServer((socket) => {
                 return;
             }
             console.log('Client Connected');
-            const headerPart = buffer.slice(0, boundary).toString();
+            const headerPart = buffer.subarray(0, boundary).toString();
             [method, target, httpVersion, headersMap] = httpHeaderParser(headerPart);
             console.log(`method: ${method}; target: ${target}; httpVersion: ${httpVersion}; headersMap:`)
             console.log(headersMap);
             headerParsed = true;
-            buffer = buffer.slice(boundary + 4)
+            buffer = buffer.subarray(boundary + 4)
         }
-        console.log("control reached here 101")
         if(!protoSwitch) {
-            console.log('control reching here as well')
             try {
-                console.log("control reached here as well")
                 console.log(isValidHandshakeRequest(method, httpVersion, headersMap))
                 if (isValidHandshakeRequest(method, httpVersion, headersMap)){
-                    console.log("control reached here")
                     const secWSaccept = headersMap['sec-websocket-key'];
                     const combined = secWSaccept + wsUUIDstring;
                     secWebSocketAccept = genSecWSaccept(combined.trim());
@@ -107,6 +133,30 @@ function isValidHandshakeRequest(method, httpVersion, headersMap) {
 // compute sha1 hash and base64 encode it 
 function genSecWSaccept(combined) {
     const hash = crypto.createHash('sha1').update(combined).digest('base64');
-    console.log('this is the key ' + hash)
     return hash;
+}
+
+function parsePayload(maskingKey, payloadLenHint, encodedPayload) {
+    if (payloadLenHint == 0) {
+        return;
+    }
+    let decodedPayload = [];
+    for (let i = 0; i < encodedPayload.length; i++) {
+        decodedPayload.push(encodedPayload[i] ^ maskingKey[i % 4]);
+    }
+    let payloadData = Buffer.from(decodedPayload).toString('utf8');
+    console.log(payloadData);
+    return payloadData;
+}
+
+function echoMessage(finBit, opcode, payloadMessage) {
+    const byte1 = (finBit << 7) || opcode;
+    const header = Buffer.from([byte1]);
+    const mask = 0;
+    const payloadLen = payloadMessage.length;
+    const byte2 = Buffer.from([mask, payloadLen])
+    const frameBytes2 = Buffer.concat([header, byte2]);
+    const payloadFrame = Buffer.from(payloadMessage)
+    const message = Buffer.concat([frameBytes2, payloadFrame])
+    return message;
 }
